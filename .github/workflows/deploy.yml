@@ -1,4 +1,4 @@
-name: Deploy to py.techsasi.com
+name: Deploy to py.techsasi.com via FTP
 
 on:
   push:
@@ -6,84 +6,31 @@ on:
       - main
 
 jobs:
-  deploy:
-    name: Deploy to Subdomain via SSH
+  web-deploy:
+    name: Deploy to Subdomain via FTP
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Checkout the code in GitHub Runner
+      # 1. Checkout GitHub Repository
       - name: Checkout Code
         uses: actions/checkout@v4
-
-      # Step 2: Copy project files directly to cPanel via SCP
-      - name: Copy Files to cPanel via SCP
-        uses: appleboy/scp-action@v0.1.7
         with:
-          host: ${{ secrets.FTP_HOST }}
+          fetch-depth: 0
+
+      # 2. Upload Files to cPanel Subdomain Directory using FTP (Port 21)
+      - name: Sync files to cPanel via FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_HOST }}
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
-          port: ${{ secrets.SSH_PORT || 22 }}
-          source: "."
-          target: "py.techsasi.com"
-          strip_components: 0
-
-      # Step 3: Run Setup Commands (Environment, Dependencies, Restart)
-      - name: Configure and Restart Python App
-        uses: appleboy/ssh-action@v1.0.3
-        env:
-          DB_USER: ${{ secrets.DB_USER }}
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          DB_HOST: ${{ secrets.DB_HOST }}
-          DB_PORT: ${{ secrets.DB_PORT }}
-          DB_NAME: ${{ secrets.DB_NAME }}
-          SECRET_KEY: ${{ secrets.SECRET_KEY }}
-        with:
-          host: ${{ secrets.FTP_HOST }}
-          username: ${{ secrets.FTP_USERNAME }}
-          password: ${{ secrets.FTP_PASSWORD }}
-          port: ${{ secrets.SSH_PORT || 21 }}
-          envs: DB_USER,DB_PASSWORD,DB_HOST,DB_PORT,DB_NAME,SECRET_KEY
-          command_timeout: 15m
-          script: |
-            set -e
-            echo "=== Configuring py.techsasi.com ==="
-
-            APP_DIR="$HOME/py.techsasi.com"
-            cd "$APP_DIR"
-
-            # 1. Generate / Update .env File
-            echo "Writing .env configurations..."
-            cat << EOF > .env
-            DB_USER=${DB_USER}
-            DB_PASSWORD=${DB_PASSWORD}
-            DB_HOST=${DB_HOST}
-            DB_PORT=${DB_PORT}
-            DB_NAME=${DB_NAME}
-            SECRET_KEY=${SECRET_KEY}
-            ALGORITHM=HS256
-            ACCESS_TOKEN_EXPIRE_MINUTES=1440
-            EOF
-
-            # 2. Activate cPanel Python virtual environment
-            VENV_PATH=$(find $HOME/virtualenv/py.techsasi.com -name "activate" 2>/dev/null | head -n 1)
-
-            if [ -n "$VENV_PATH" ] && [ -f "$VENV_PATH" ]; then
-              echo "Activating virtualenv: $VENV_PATH"
-              source "$VENV_PATH"
-            else
-              python3 -m venv venv
-              source venv/bin/activate
-            fi
-
-            # 3. Install dependencies
-            pip install --no-cache-dir --upgrade pip
-            pip install --no-cache-dir a2wsgi
-            if [ -f "requirements.txt" ]; then
-              pip install --no-cache-dir -r requirements.txt
-            fi
-
-            # 4. Restart Passenger to apply updates
-            mkdir -p tmp
-            touch tmp/restart.txt
-
-            echo "=== Deployment Completed for https://py.techsasi.com ==="
+          port: 21
+          server-dir: py.techsasi.com/
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            **/venv/**
+            **/__pycache__/**
+            .env.example
+            README.md
