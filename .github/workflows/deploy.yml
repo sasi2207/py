@@ -11,13 +11,26 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Step 1: Checkout the code in GitHub Runner
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Deploy to cPanel using SSH
+      # Step 2: Copy project files directly to cPanel via SCP
+      - name: Copy Files to cPanel via SCP
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.FTP_HOST }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          source: "."
+          target: "py.techsasi.com"
+          strip_components: 0
+
+      # Step 3: Run Setup Commands (Environment, Dependencies, Restart)
+      - name: Configure and Restart Python App
         uses: appleboy/ssh-action@v1.0.3
         env:
-          GH_PAT: ${{ secrets.GH_PAT }}
           DB_USER: ${{ secrets.DB_USER }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           DB_HOST: ${{ secrets.DB_HOST }}
@@ -28,37 +41,18 @@ jobs:
           host: ${{ secrets.FTP_HOST }}
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
-          port: 22  # Hardcoded standard SSH port (change to custom port if your host uses one)
-          envs: GH_PAT,DB_USER,DB_PASSWORD,DB_HOST,DB_PORT,DB_NAME,SECRET_KEY
+          port: ${{ secrets.SSH_PORT || 22 }}
+          envs: DB_USER,DB_PASSWORD,DB_HOST,DB_PORT,DB_NAME,SECRET_KEY
           command_timeout: 15m
           script: |
             set -e
-            echo "=== Deploying to py.techsasi.com ==="
+            echo "=== Configuring py.techsasi.com ==="
 
-            # 1. Target Subdomain Directory
             APP_DIR="$HOME/py.techsasi.com"
-            mkdir -p "$APP_DIR"
             cd "$APP_DIR"
 
-            # 2. Sync Repository
-            if [ -d ".git" ]; then
-              if [ -n "$GH_PAT" ]; then
-                git remote set-url origin https://${GH_PAT}@github.com/${{ github.repository }}.git
-              fi
-              git fetch origin main
-              git reset --hard origin/main
-            else
-              git init
-              if [ -n "$GH_PAT" ]; then
-                git remote add origin https://${GH_PAT}@github.com/${{ github.repository }}.git
-              else
-                git remote add origin https://github.com/${{ github.repository }}.git
-              fi
-              git fetch origin main
-              git reset --hard origin/main
-            fi
-
-            # 3. Generate .env File
+            # 1. Generate / Update .env File
+            echo "Writing .env configurations..."
             cat << EOF > .env
             DB_USER=${DB_USER}
             DB_PASSWORD=${DB_PASSWORD}
@@ -66,9 +60,11 @@ jobs:
             DB_PORT=${DB_PORT}
             DB_NAME=${DB_NAME}
             SECRET_KEY=${SECRET_KEY}
+            ALGORITHM=HS256
+            ACCESS_TOKEN_EXPIRE_MINUTES=1440
             EOF
 
-            # 4. Activate Virtualenv & Install Requirements
+            # 2. Activate cPanel Python virtual environment
             VENV_PATH=$(find $HOME/virtualenv/py.techsasi.com -name "activate" 2>/dev/null | head -n 1)
 
             if [ -n "$VENV_PATH" ] && [ -f "$VENV_PATH" ]; then
@@ -79,11 +75,14 @@ jobs:
               source venv/bin/activate
             fi
 
-            pip install --upgrade pip
-            pip install a2wsgi
-            pip install -r requirements.txt
+            # 3. Install dependencies
+            pip install --no-cache-dir --upgrade pip
+            pip install --no-cache-dir a2wsgi
+            if [ -f "requirements.txt" ]; then
+              pip install --no-cache-dir -r requirements.txt
+            fi
 
-            # 5. Reload Passenger
+            # 4. Restart Passenger to apply updates
             mkdir -p tmp
             touch tmp/restart.txt
 
