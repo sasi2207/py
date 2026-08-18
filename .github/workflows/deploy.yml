@@ -1,0 +1,71 @@
+name: Deploy to py.techsasi.com
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Deploy to Subdomain via SSH
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Deploy to cPanel using SSH Password
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.FTP_HOST }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          port: ${{ secrets.FTP_PORT || 22 }}
+          script: |
+            set -e
+            echo "=== Deploying to py.techsasi.com ==="
+
+            # 1. Target Subdomain Directory
+            APP_DIR="$HOME/py.techsasi.com"
+
+            if [ -d "$APP_DIR/.git" ]; then
+              cd $APP_DIR
+              git fetch origin main
+              git reset --hard origin/main
+            else
+              mkdir -p $APP_DIR
+              cd $APP_DIR
+              git clone https://${{ secrets.GH_PAT }}@github.com/${{ github.repository }}.git .
+            fi
+
+            # 2. Write .env
+            cat << 'EOF' > .env
+            DB_USER=${{ secrets.DB_USER }}
+            DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+            DB_HOST=${{ secrets.DB_HOST }}
+            DB_PORT=${{ secrets.DB_PORT }}
+            DB_NAME=${{ secrets.DB_NAME }}
+            SECRET_KEY=${{ secrets.SECRET_KEY }}
+            EOF
+
+            # 3. Activate virtual environment created by cPanel Python App
+            # Path format: $HOME/virtualenv/py.techsasi.com//bin/activate
+            VENV_PATH=$(find $HOME/virtualenv/py.techsasi.com -name "activate" 2>/dev/null | head -n 1)
+
+            if [ -n "$VENV_PATH" ] && [ -f "$VENV_PATH" ]; then
+              echo "Activating virtualenv: $VENV_PATH"
+              source "$VENV_PATH"
+            else
+              python3 -m venv venv
+              source venv/bin/activate
+            fi
+
+            pip install --upgrade pip
+            pip install a2wsgi
+            pip install -r requirements.txt
+
+            # 4. Restart Passenger to apply changes
+            mkdir -p tmp
+            touch tmp/restart.txt
+
+            echo "=== Deployment Completed for https://py.techsasi.com ==="
